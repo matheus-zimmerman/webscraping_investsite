@@ -44,6 +44,148 @@ try:
 except ImportError:
     SELENIUM_AVAILABLE = False
 
+class DataCleaner:
+    """Classe para limpeza e formatação automática dos dados"""
+    
+    @staticmethod
+    def clean_currency_to_float(value):
+        """
+        Remove R$ e converte para float
+        Exemplo: 'R$ 25,50' -> 25.50
+        """
+        if not value or value == 'N/A' or value == '-':
+            return None
+        try:
+            # Remove R$, espaços e outros caracteres
+            clean_val = str(value).replace('R$', '').replace('R ', '').strip()
+            # Substitui vírgula por ponto
+            clean_val = clean_val.replace(',', '.')
+            # Extrai apenas números e ponto
+            match = re.search(r'([\d.]+)', clean_val)
+            if match:
+                return round(float(match.group(1)), 2)
+        except:
+            pass
+        return None
+    
+    @staticmethod
+    def clean_currency_with_scale_to_float(value):
+        """
+        Remove R$ e converte considerando escala (K, M, B)
+        Exemplos: 
+        'R$ 1,5 M' -> 1500000.00
+        'R$ 250,30 K' -> 250300.00
+        'R$ 2,1 B' -> 2100000000.00
+        """
+        if not value or value == 'N/A' or value == '-':
+            return None
+        try:
+            # Remove R$ e normaliza
+            clean_val = str(value).replace('R$', '').replace('R ', '').strip().upper()
+            
+            # Detecta escala
+            scale_multiplier = 1
+            if 'B' in clean_val:
+                scale_multiplier = 1_000_000_000  # Bilhão
+                clean_val = clean_val.replace('B', '').strip()
+            elif 'M' in clean_val:
+                scale_multiplier = 1_000_000  # Milhão
+                clean_val = clean_val.replace('M', '').strip()
+            elif 'K' in clean_val:
+                scale_multiplier = 1_000  # Mil
+                clean_val = clean_val.replace('K', '').strip()
+            
+            # Substitui vírgula por ponto
+            clean_val = clean_val.replace(',', '.')
+            # Extrai número
+            match = re.search(r'([\d.,]+)', clean_val)
+            if match:
+                number = float(match.group(1))
+                return round(number * scale_multiplier, 2)
+        except:
+            pass
+        return None
+    
+    @staticmethod
+    def clean_percentage_to_float(value):
+        """
+        Remove % e converte para float
+        Exemplo: '15,30%' -> 15.30
+        """
+        if not value or value == 'N/A' or value == '-':
+            return None
+        try:
+            # Remove % e espaços
+            clean_val = str(value).replace('%', '').strip()
+            # Substitui vírgula por ponto
+            clean_val = clean_val.replace(',', '.')
+            # Extrai número (incluindo negativos)
+            match = re.search(r'([-+]?[\d.,]+)', clean_val)
+            if match:
+                return round(float(match.group(1)), 2)
+        except:
+            pass
+        return None
+    
+    @staticmethod
+    def clean_ratio_to_float(value):
+        """
+        Converte ratios/múltiplos para float
+        Exemplo: '8,50' -> 8.50
+        """
+        if not value or value == 'N/A' or value == '-':
+            return None
+        try:
+            # Substitui vírgula por ponto
+            clean_val = str(value).replace(',', '.').strip()
+            # Extrai número (incluindo negativos)
+            match = re.search(r'([-+]?[\d.,]+)', clean_val)
+            if match:
+                return round(float(match.group(1)), 2)
+        except:
+            pass
+        return None
+    
+    @staticmethod
+    def clean_date_to_format(value):
+        """
+        Converte datas para formato DD/MM/YYYY
+        """
+        if not value or value == 'N/A' or value == '-':
+            return None
+        try:
+            # Tenta diferentes formatos de data
+            date_str = str(value).strip()
+            
+            # Formatos comuns: DD/MM/YYYY, YYYY-MM-DD, DD-MM-YYYY
+            for fmt in ['%d/%m/%Y', '%Y-%m-%d', '%d-%m-%Y', '%d/%m/%y']:
+                try:
+                    date_obj = datetime.strptime(date_str, fmt)
+                    return date_obj.strftime('%d/%m/%Y')
+                except:
+                    continue
+        except:
+            pass
+        return value  # Retorna original se não conseguir converter
+    
+    @staticmethod
+    def clean_integer(value):
+        """
+        Converte para número inteiro
+        """
+        if not value or value == 'N/A' or value == '-':
+            return None
+        try:
+            # Remove pontos e vírgulas de separadores de milhares
+            clean_val = str(value).replace('.', '').replace(',', '').strip()
+            # Extrai apenas números
+            match = re.search(r'(\d+)', clean_val)
+            if match:
+                return int(match.group(1))
+        except:
+            pass
+        return None
+
 class StocksScraper:
     def __init__(self, use_selenium=True, max_workers=5, batch_size=20):
         """
@@ -853,11 +995,14 @@ class StocksScraper:
             if earnings_yield:
                 stock_data["Earnings Yield (%)"] = earnings_yield
             
+            # 🆕 NOVO: Limpeza automática dos dados
+            cleaned_data = self.clean_stock_data(stock_data)
+            
             # Verifica se conseguiu extrair dados
-            if len(stock_data) <= 1:  # Apenas o código
+            if len(cleaned_data) <= 1:  # Apenas o código
                 return {"Código": stock_code, "Status": "Nenhuma tabela encontrada"}
             
-            return stock_data
+            return cleaned_data
             
         except Exception as e:
             return {"Código": stock_code, "Erro": str(e)}
@@ -898,6 +1043,163 @@ class StocksScraper:
         except Exception as e:
             print(f"⚠️  Erro ao calcular Earnings Yield para {stock_data.get('Código', 'N/A')}: {e}")
             return "N/A"
+    
+    def clean_stock_data(self, stock_data):
+        """
+        Aplica limpeza automática em todos os campos especificados
+        """
+        cleaned_data = stock_data.copy()
+        
+        # Dicionário de campos e suas funções de limpeza
+        cleaning_rules = {
+            # Preços básicos
+            "Último Preço de Fechamento": DataCleaner.clean_currency_to_float,
+            "Volume Financeiro Transacionado": DataCleaner.clean_currency_with_scale_to_float,
+            
+            # Indicadores de múltiplos
+            "Indicador - Preço/Lucro": DataCleaner.clean_ratio_to_float,
+            "Indicador - Preço/VPA": DataCleaner.clean_ratio_to_float,
+            "Indicador - Preço/Receita Líquida": DataCleaner.clean_ratio_to_float,
+            "Indicador - Preço/FCO": DataCleaner.clean_ratio_to_float,
+            "Indicador - Preço/FCF": DataCleaner.clean_ratio_to_float,
+            "Indicador - Preço/Ativo Total": DataCleaner.clean_ratio_to_float,
+            "Indicador - Preço/EBIT": DataCleaner.clean_ratio_to_float,
+            "Indicador - Preço/Capital Giro": DataCleaner.clean_ratio_to_float,
+            "Indicador - Preço/NCAV": DataCleaner.clean_ratio_to_float,
+            "Indicador - EV/EBIT": DataCleaner.clean_ratio_to_float,
+            "Indicador - EV/EBITDA": DataCleaner.clean_ratio_to_float,
+            "Indicador - EV/Receita Líquida": DataCleaner.clean_ratio_to_float,
+            "Indicador - EV/FCO": DataCleaner.clean_ratio_to_float,
+            "Indicador - EV/FCF": DataCleaner.clean_ratio_to_float,
+            "Indicador - EV/Ativo Total": DataCleaner.clean_ratio_to_float,
+            
+            # Market Cap e Enterprise Value
+            "Indicador - Market Cap Empresa": DataCleaner.clean_currency_with_scale_to_float,
+            "Indicador - Enterprise Value": DataCleaner.clean_currency_with_scale_to_float,
+            
+            # Datas
+            "Indicador - Data Demonstração Financeira Atual": DataCleaner.clean_date_to_format,
+            "Indicador - Data do Preço da Ação": DataCleaner.clean_date_to_format,
+            
+            # Preços e yields
+            "Indicador - Preço Atual da Ação": DataCleaner.clean_currency_to_float,
+            "Indicador - Dividend Yield": DataCleaner.clean_percentage_to_float,
+            
+            # DRE 12M
+            "DRE 12M - Receita Líquida": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 12M - Resultado Bruto": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 12M - EBIT": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 12M - Depreciação e Amortização": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 12M - EBITDA": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 12M - Lucro Líquido": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 12M - Lucro/Ação": DataCleaner.clean_currency_with_scale_to_float,
+            
+            # DRE 3M
+            "DRE 3M - Receita Líquida": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 3M - Resultado Bruto": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 3M - EBIT": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 3M - Depreciação e Amortização": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 3M - EBITDA": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 3M - Lucro Líquido": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 3M - Lucro/Ação": DataCleaner.clean_currency_with_scale_to_float,
+            
+            # Retornos e Margens - Percentuais
+            "Retorno/Margem - Retorno s/ Capital Tangível Inicial": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Retorno s/ Capital Investido Inicial": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Retorno s/ Capital Tangível Inicial Pré-Impostos": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Retorno s/ Capital Investido Inicial Pré-Impostos": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Retorno s/ Patrimônio Líquido Inicial": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Retorno s/ Ativo Inicial": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Margem Bruta": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Margem Líquida": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Margem EBIT": DataCleaner.clean_percentage_to_float,
+            "Retorno/Margem - Margem EBITDA": DataCleaner.clean_percentage_to_float,
+            
+            # Retornos e Margens - Ratios
+            "Retorno/Margem - Giro do Ativo Inicial": DataCleaner.clean_ratio_to_float,
+            "Retorno/Margem - Alavancagem Financeira": DataCleaner.clean_ratio_to_float,
+            "Retorno/Margem - Passivo/Patrimônio Líquido": DataCleaner.clean_ratio_to_float,
+            "Retorno/Margem - Dívida Líquida/EBITDA": DataCleaner.clean_ratio_to_float,
+            
+            # Balanço - Valores financeiros
+            "Balanço - Caixa e Equivalentes de Caixa": DataCleaner.clean_currency_with_scale_to_float,
+            "Balanço - Ativo Total": DataCleaner.clean_currency_with_scale_to_float,
+            "Balanço - Dívida de Curto Prazo": DataCleaner.clean_currency_with_scale_to_float,
+            "Balanço - Dívida de Longo Prazo": DataCleaner.clean_currency_with_scale_to_float,
+            "Balanço - Dívida Bruta": DataCleaner.clean_currency_with_scale_to_float,
+            "Balanço - Dívida Líquida": DataCleaner.clean_currency_with_scale_to_float,
+            "Balanço - Patrimônio Líquido": DataCleaner.clean_currency_with_scale_to_float,
+            "Balanço - Valor Patrimonial da Ação": DataCleaner.clean_currency_with_scale_to_float,
+            
+            # Balanço - Ações (inteiros)
+            "Balanço - Ações Ordinárias": DataCleaner.clean_integer,
+            "Balanço - Ações Preferenciais": DataCleaner.clean_integer,
+            "Balanço - Total": DataCleaner.clean_integer,
+            "Balanço - Ações Ordinárias em Tesouraria": DataCleaner.clean_integer,
+            "Balanço - Ações Preferenciais em Tesouraria": DataCleaner.clean_integer,
+            "Balanço - Total em Tesouraria": DataCleaner.clean_integer,
+            "Balanço - Ações Ordinárias (Exceto Tesouraria)": DataCleaner.clean_integer,
+            "Balanço - Ações Preferenciais (Exceto Tesouraria)": DataCleaner.clean_integer,
+            "Balanço - Total (Exceto Tesouraria)": DataCleaner.clean_integer,
+            
+            # Fluxo de Caixa 12M
+            "FC 12M - Fluxo de Caixa Operacional": DataCleaner.clean_currency_with_scale_to_float,
+            "FC 12M - Fluxo de Caixa de Investimentos": DataCleaner.clean_currency_with_scale_to_float,
+            "FC 12M - Fluxo de Caixa de Financiamentos": DataCleaner.clean_currency_with_scale_to_float,
+            "FC 12M - Aumento (Redução) de Caixa e Equivalentes": DataCleaner.clean_currency_with_scale_to_float,
+            
+            # Fluxo de Caixa 3M
+            "FC 3M - Fluxo de Caixa Operacional": DataCleaner.clean_currency_with_scale_to_float,
+            "FC 3M - Fluxo de Caixa de Investimentos": DataCleaner.clean_currency_with_scale_to_float,
+            "FC 3M - Fluxo de Caixa de Financiamentos": DataCleaner.clean_currency_with_scale_to_float,
+            "FC 3M - Aumento (Redução) de Caixa e Equivalentes": DataCleaner.clean_currency_with_scale_to_float,
+            
+            # CAPEX e FCL
+            "CAPEX/FCL - CAPEX 3 meses": DataCleaner.clean_currency_with_scale_to_float,
+            "CAPEX/FCL - Fluxo de Caixa Livre 3 meses": DataCleaner.clean_currency_with_scale_to_float,
+            "CAPEX/FCL - CAPEX 12 meses": DataCleaner.clean_currency_with_scale_to_float,
+            "CAPEX/FCL - Fluxo de Caixa Livre 12 meses": DataCleaner.clean_currency_with_scale_to_float,
+            
+            # Earnings Yield
+            "Earnings Yield (%)": DataCleaner.clean_percentage_to_float,
+            
+            # Preço/Volume
+            "Preço/Volume - Menor Preço 52 semanas": DataCleaner.clean_currency_to_float,
+            "Preço/Volume - Maior Preço 52 semanas": DataCleaner.clean_currency_to_float,
+            "Preço/Volume - Variação 2025": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 1 ano": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 2 anos(total)": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 2 anos(anual)": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 3 anos(total)": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 3 anos(anual)": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 4 anos(total)": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 4 anos(anual)": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 5 anos(total)": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Variação 5 anos(anual)": DataCleaner.clean_percentage_to_float,
+            "Preço/Volume - Volume Diário Médio (3 meses)": DataCleaner.clean_currency_with_scale_to_float,
+        }
+        
+        # Aplica limpeza para cada campo
+        for field_name, cleaning_function in cleaning_rules.items():
+            if field_name in cleaned_data and cleaned_data[field_name]:
+                try:
+                    original_value = cleaned_data[field_name]
+                    cleaned_value = cleaning_function(original_value)
+                    
+                    # Só substitui se a limpeza foi bem-sucedida
+                    if cleaned_value is not None:
+                        cleaned_data[field_name] = cleaned_value
+                        
+                        # Log de debug (opcional)
+                        if original_value != str(cleaned_value):
+                            pass  # print(f"🧹 {field_name}: '{original_value}' -> {cleaned_value}")
+                            
+                except Exception as e:
+                    print(f"⚠️  Erro ao limpar campo '{field_name}': {e}")
+                    # Mantém valor original em caso de erro
+                    pass
+        
+        return cleaned_data
     
     def scrape_all_stocks(self, stock_codes):
         """Faz scraping de todas as ações - VERSÃO PARALELA OTIMIZADA"""
@@ -1058,6 +1360,7 @@ class StocksScraper:
                 print(f"   Receita 12M: {receita_12m}")
                 print(f"   EBITDA 12M: {ebitda_12m}")
                 print(f"   Lucro 12M: {lucro_12m}")
+                print(f"   🧹 Dados automaticamente limpos e formatados!")
         
         # Mostra campos coletados
         if self.stocks_data:
