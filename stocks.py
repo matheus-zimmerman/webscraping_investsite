@@ -1212,7 +1212,7 @@ class StocksScraper:
             "DRE 12M - Depreciação e Amortização": DataCleaner.clean_currency_with_scale_to_float,
             "DRE 12M - EBITDA": DataCleaner.clean_currency_with_scale_to_float,
             "DRE 12M - Lucro Líquido": DataCleaner.clean_currency_with_scale_to_float,
-            "DRE 12M - Lucro/Ação": DataCleaner.clean_currency_to_float,
+            "DRE 12M - Lucro/Ação": DataCleaner.clean_currency_with_scale_to_float,  # CORRIGIDO: agora usa função com escala
             
             # DRE 3M
             "DRE 3M - Receita Líquida": DataCleaner.clean_currency_with_scale_to_float,
@@ -1221,7 +1221,7 @@ class StocksScraper:
             "DRE 3M - Depreciação e Amortização": DataCleaner.clean_currency_with_scale_to_float,
             "DRE 3M - EBITDA": DataCleaner.clean_currency_with_scale_to_float,
             "DRE 3M - Lucro Líquido": DataCleaner.clean_currency_with_scale_to_float,
-            "DRE 3M - Lucro/Ação": DataCleaner.clean_currency_to_float,
+            "DRE 3M - Lucro/Ação": DataCleaner.clean_currency_with_scale_to_float,  # CORRIGIDO: agora usa função com escala
             
             # Retornos e Margens - Percentuais
             "Retorno/Margem - Retorno s/ Capital Tangível Inicial": DataCleaner.clean_percentage_to_float,
