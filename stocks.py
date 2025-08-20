@@ -51,99 +51,192 @@ class DataCleaner:
     def clean_currency_to_float(value):
         """
         Remove R$ e converte para float
-        Exemplo: 'R$ 25,50' -> 25.50
+        Exemplo: 'R$ 25,50' -> 25.50, '- R$ 0,18' -> -0.18
         """
         if not value or value == 'N/A' or value == '-':
             return None
         try:
-            # Remove R$, espaços e outros caracteres
-            clean_val = str(value).replace('R$', '').replace('R ', '').strip()
-            # Substitui vírgula por ponto
-            clean_val = clean_val.replace(',', '.')
-            # Extrai apenas números e ponto
+            original_value = str(value).strip()
+            
+            # Detecta se é negativo (pode estar antes ou depois do R$)
+            is_negative = False
+            if original_value.startswith('-') or original_value.startswith('- ') or 'R$ -' in original_value or 'R$-' in original_value:
+                is_negative = True
+            
+            # Remove R$, sinais e normaliza
+            clean_val = original_value.replace('R$', '').replace('R ', '').replace('-', '').replace(' ', '').strip()
+            
+            # Remove pontos de milhares mas mantém vírgula decimal
+            # Identifica se a vírgula é decimal (últimos 3 caracteres) ou separador de milhares
+            if ',' in clean_val:
+                parts = clean_val.split(',')
+                if len(parts[-1]) <= 2:  # Vírgula decimal
+                    # Remove pontos de milhares e substitui vírgula por ponto
+                    clean_val = clean_val.replace('.', '').replace(',', '.')
+                else:  # Vírgula de milhares
+                    clean_val = clean_val.replace(',', '').replace('.', '')
+            else:
+                clean_val = clean_val.replace('.', '')
+            
+            # Extrai apenas números e ponto decimal (sem sinal, pois já tratamos)
             match = re.search(r'([\d.]+)', clean_val)
             if match:
-                return round(float(match.group(1)), 2)
-        except:
-            pass
+                number = float(match.group(1))
+                result = round(number, 2)
+                return -result if is_negative else result
+        except Exception as e:
+            print(f"⚠️  Erro ao limpar moeda '{value}': {e}")
         return None
     
     @staticmethod
     def clean_currency_with_scale_to_float(value):
         """
-        Remove R$ e converte considerando escala (K, M, B)
+        Remove R$ e converte considerando escala (K, M, B, mil)
         Exemplos: 
         'R$ 1,5 M' -> 1500000.00
-        'R$ 250,30 K' -> 250300.00
+        'R$ 250,30 mil' -> 250300.00
         'R$ 2,1 B' -> 2100000000.00
+        '- R$ 7,15 B' -> -7150000000.00
+        '-R$ 1,5 B' -> -1500000000.00
         """
         if not value or value == 'N/A' or value == '-':
             return None
         try:
-            # Remove R$ e normaliza
-            clean_val = str(value).replace('R$', '').replace('R ', '').strip().upper()
+            original_value = str(value).strip()
             
-            # Detecta escala
+            # Detecta se é negativo (pode estar antes ou depois do R$)
+            is_negative = False
+            if original_value.startswith('-') or original_value.startswith('- ') or 'R$ -' in original_value or 'R$-' in original_value:
+                is_negative = True
+            
+            # Remove R$, sinais e normaliza
+            clean_val = original_value.replace('R$', '').replace('R ', '').replace('-', '').replace(' ', '').strip().upper()
+            
+            # Detecta escala (ordem importante: MIL antes de M)
             scale_multiplier = 1
             if 'B' in clean_val:
                 scale_multiplier = 1_000_000_000  # Bilhão
                 clean_val = clean_val.replace('B', '').strip()
+            elif 'MIL' in clean_val:
+                scale_multiplier = 1_000  # Mil (formato brasileiro)
+                clean_val = clean_val.replace('MIL', '').strip()
             elif 'M' in clean_val:
                 scale_multiplier = 1_000_000  # Milhão
                 clean_val = clean_val.replace('M', '').strip()
             elif 'K' in clean_val:
-                scale_multiplier = 1_000  # Mil
+                scale_multiplier = 1_000  # Mil (formato internacional)
                 clean_val = clean_val.replace('K', '').strip()
             
-            # Substitui vírgula por ponto
-            clean_val = clean_val.replace(',', '.')
-            # Extrai número
-            match = re.search(r'([\d.,]+)', clean_val)
+            # Trata formatação brasileira de números
+            if ',' in clean_val and '.' in clean_val:
+                # Formato: 1.234.567,89 - pontos são separadores de milhares
+                clean_val = clean_val.replace('.', '').replace(',', '.')
+            elif ',' in clean_val:
+                parts = clean_val.split(',')
+                if len(parts[-1]) <= 2:  # Vírgula decimal
+                    clean_val = clean_val.replace(',', '.')
+                else:  # Vírgula de milhares
+                    clean_val = clean_val.replace(',', '')
+            elif '.' in clean_val:
+                parts = clean_val.split('.')
+                if len(parts[-1]) <= 2:  # Ponto decimal (formato americano)
+                    pass  # Já está correto
+                else:  # Ponto de milhares
+                    clean_val = clean_val.replace('.', '')
+                    
+            # Extrai número (apenas positivo, pois já tratamos o sinal)
+            match = re.search(r'([\d.]+)', clean_val)
             if match:
                 number = float(match.group(1))
-                return round(number * scale_multiplier, 2)
-        except:
-            pass
+                result = round(number * scale_multiplier, 2)
+                return -result if is_negative else result
+        except Exception as e:
+            print(f"⚠️  Erro ao limpar moeda com escala '{value}': {e}")
         return None
     
     @staticmethod
     def clean_percentage_to_float(value):
         """
         Remove % e converte para float
-        Exemplo: '15,30%' -> 15.30
+        Trata casos especiais: '-18.000,00%' -> -18.00 (dividindo por 1000)
         """
         if not value or value == 'N/A' or value == '-':
             return None
         try:
             # Remove % e espaços
             clean_val = str(value).replace('%', '').strip()
-            # Substitui vírgula por ponto
-            clean_val = clean_val.replace(',', '.')
+            
+            # CASO ESPECIAL: Percentuais com separador de milhares
+            # O site InvestSite formata percentuais com 3 casas extras
+            # Ex: -18.000,00% = -18000.00 mas deveria ser -18.00%
+            if '.' in clean_val and ',' in clean_val:
+                # Formato brasileiro com separador de milhares em percentual
+                # Remove pontos (separadores de milhares) e substitui vírgula por ponto
+                clean_val = clean_val.replace('.', '').replace(',', '.')
+                
+                # TODOS os casos com separador de milhares devem ser divididos por 1000
+                # Isso corrige a formatação incorreta do site
+                temp_result = float(clean_val)
+                clean_val = str(temp_result / 1000)
+                        
+            elif ',' in clean_val:
+                # Apenas vírgula: assume que é decimal brasileiro normal
+                clean_val = clean_val.replace(',', '.')
+            elif '.' in clean_val:
+                # Apenas ponto: verifica se é decimal ou separador
+                parts = clean_val.split('.')
+                if len(parts[-1]) <= 2:  # Ponto decimal (formato americano)
+                    pass  # Já está correto
+                else:  # Ponto de milhares sem vírgula (ex: 18.000)
+                    # Também precisa ser dividido por 1000 se for muito grande
+                    temp_result = float(clean_val.replace('.', ''))
+                    if abs(temp_result) >= 1000:  # Provavelmente formatação incorreta
+                        clean_val = str(temp_result / 1000)
+                    else:
+                        clean_val = clean_val.replace('.', '')
+                    
             # Extrai número (incluindo negativos)
-            match = re.search(r'([-+]?[\d.,]+)', clean_val)
+            match = re.search(r'([-+]?[\d.]+)', clean_val)
             if match:
                 return round(float(match.group(1)), 2)
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️  Erro ao limpar percentual '{value}': {e}")
         return None
     
     @staticmethod
     def clean_ratio_to_float(value):
         """
         Converte ratios/múltiplos para float
-        Exemplo: '8,50' -> 8.50
+        Exemplo: '8,50' -> 8.50, '1.234,56' -> 1234.56
         """
         if not value or value == 'N/A' or value == '-':
             return None
         try:
-            # Substitui vírgula por ponto
-            clean_val = str(value).replace(',', '.').strip()
+            clean_val = str(value).strip()
+            
+            # Trata formatação brasileira de números
+            if ',' in clean_val and '.' in clean_val:
+                # Formato: 1.234,56 - ponto é separador de milhares
+                clean_val = clean_val.replace('.', '').replace(',', '.')
+            elif ',' in clean_val:
+                parts = clean_val.split(',')
+                if len(parts[-1]) <= 2:  # Vírgula decimal
+                    clean_val = clean_val.replace(',', '.')
+                else:  # Vírgula de milhares
+                    clean_val = clean_val.replace(',', '')
+            elif '.' in clean_val:
+                parts = clean_val.split('.')
+                if len(parts[-1]) <= 2:  # Ponto decimal (formato americano)
+                    pass  # Já está correto
+                else:  # Ponto de milhares
+                    clean_val = clean_val.replace('.', '')
+                    
             # Extrai número (incluindo negativos)
-            match = re.search(r'([-+]?[\d.,]+)', clean_val)
+            match = re.search(r'([-+]?[\d.]+)', clean_val)
             if match:
                 return round(float(match.group(1)), 2)
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️  Erro ao limpar ratio '{value}': {e}")
         return None
     
     @staticmethod
@@ -172,18 +265,21 @@ class DataCleaner:
     def clean_integer(value):
         """
         Converte para número inteiro
+        Exemplo: '1.250.000.000' -> 1250000000
         """
         if not value or value == 'N/A' or value == '-':
             return None
         try:
             # Remove pontos e vírgulas de separadores de milhares
             clean_val = str(value).replace('.', '').replace(',', '').strip()
+            # Remove outros caracteres não numéricos exceto sinais
+            clean_val = re.sub(r'[^\d\-+]', '', clean_val)
             # Extrai apenas números
-            match = re.search(r'(\d+)', clean_val)
+            match = re.search(r'([-+]?\d+)', clean_val)
             if match:
                 return int(match.group(1))
-        except:
-            pass
+        except Exception as e:
+            print(f"⚠️  Erro ao limpar inteiro '{value}': {e}")
         return None
 
 class StocksScraper:
@@ -775,12 +871,20 @@ class StocksScraper:
                             link = value_cell.find('a')
                             if link:
                                 value_text = link.get_text().strip()
+                                # Check if it's a currency with scale (B, M, mil, K) - preserve full text
                                 import re
-                                value = re.findall(r'[-+]?[0-9]*[.,]?[0-9]+[%]?', value_text)
-                                if value:
-                                    value = value[0]
-                                else:
+                                if re.search(r'[-\s]*R\$.*[BMK]|\bmil\b', value_text):
                                     value = value_text
+                                else:
+                                    # For other values, extract numbers preserving negative sign
+                                    is_negative = value_text.strip().startswith('-')
+                                    numbers = re.findall(r'[0-9]+[.,]?[0-9]*[%]?', value_text)
+                                    if numbers:
+                                        value = numbers[0]
+                                        if is_negative:
+                                            value = f"-{value}"
+                                    else:
+                                        value = value_text
                             else:
                                 value = value_cell.get_text().strip()
                             
@@ -803,11 +907,16 @@ class StocksScraper:
                             if link:
                                 value_text = link.get_text().strip()
                                 import re
-                                value_match = re.search(r'(R\$\s*[\d.,]+\s*[BMK]?|[\d.,]+)', value_text)
-                                if value_match:
-                                    value = value_match.group(1)
+                                # CORRIGIDO: Sempre preserva valores monetários (com ou sem escala)
+                                if re.search(r'[-\s]*R\$', value_text):
+                                    value = value_text  # Preserva todo o valor monetário incluindo sinal negativo
                                 else:
-                                    value = value_text
+                                    # For other values, extract numbers as before
+                                    value_match = re.search(r'([-+]?[\d.,]+%?)', value_text)
+                                    if value_match:
+                                        value = value_match.group(1)
+                                    else:
+                                        value = value_text
                             else:
                                 value = value_cell.get_text().strip()
                             
@@ -830,11 +939,16 @@ class StocksScraper:
                             if link:
                                 value_text = link.get_text().strip()
                                 import re
-                                value_match = re.search(r'(R\$\s*[\d.,]+\s*[BMK]?|[\d.,]+)', value_text)
-                                if value_match:
-                                    value = value_match.group(1)
+                                # CORRIGIDO: Sempre preserva valores monetários (com ou sem escala)
+                                if re.search(r'[-\s]*R\$', value_text):
+                                    value = value_text  # Preserva todo o valor monetário incluindo sinal negativo
                                 else:
-                                    value = value_text
+                                    # For other values, extract numbers as before
+                                    value_match = re.search(r'([-+]?[\d.,]+%?)', value_text)
+                                    if value_match:
+                                        value = value_match.group(1)
+                                    else:
+                                        value = value_text
                             else:
                                 value = value_cell.get_text().strip()
                             
@@ -898,11 +1012,16 @@ class StocksScraper:
                             if link:
                                 value_text = link.get_text().strip()
                                 import re
-                                value_match = re.search(r'(R\$\s*[\d.,]+\s*[BMK]?|[\d.,]+)', value_text)
-                                if value_match:
-                                    value = value_match.group(1)
-                                else:
+                                # Check if it's a currency with scale (B, M, mil, K) - preserve full text
+                                if re.search(r'[-\s]*R\$.*[BMK]|\bmil\b', value_text):
                                     value = value_text
+                                else:
+                                    # For other values, extract numbers as before
+                                    value_match = re.search(r'([-+]?[\d.,]+%?)', value_text)
+                                    if value_match:
+                                        value = value_match.group(1)
+                                    else:
+                                        value = value_text
                             else:
                                 value = value_cell.get_text().strip()
                             
@@ -1017,21 +1136,22 @@ class StocksScraper:
             for key in stock_data.keys():
                 if "Lucro/Ação" in key or "lucro por ação" in key.lower():
                     lucro_str = stock_data[key]
-                    # Extrai número da string
-                    lucro_match = re.search(r'([-+]?[\d.,]+)', lucro_str.replace('R$', '').replace(',', '.'))
-                    if lucro_match:
-                        lucro_por_acao = float(lucro_match.group(1))
+                    # Usar a função de limpeza do DataCleaner para conversão correta
+                    try:
+                        lucro_por_acao = DataCleaner.clean_currency_to_float(lucro_str)
                         break
+                    except:
+                        continue
             
             # Busca o último preço de fechamento
             ultimo_preco = None
             preco_key = stock_data.get('Último Preço de Fechamento', '')
             if preco_key:
-                # Remove R$ e converte vírgulas para pontos
-                preco_clean = preco_key.replace('R$', '').replace(',', '.').strip()
-                preco_match = re.search(r'([\d.]+)', preco_clean)
-                if preco_match:
-                    ultimo_preco = float(preco_match.group(1))
+                # Usar a função de limpeza do DataCleaner para conversão correta
+                try:
+                    ultimo_preco = DataCleaner.clean_currency_to_float(preco_key)
+                except:
+                    ultimo_preco = None
             
             # Calcula o Earnings Yield se ambos os valores existem
             if lucro_por_acao is not None and ultimo_preco is not None and ultimo_preco > 0:
@@ -1092,7 +1212,7 @@ class StocksScraper:
             "DRE 12M - Depreciação e Amortização": DataCleaner.clean_currency_with_scale_to_float,
             "DRE 12M - EBITDA": DataCleaner.clean_currency_with_scale_to_float,
             "DRE 12M - Lucro Líquido": DataCleaner.clean_currency_with_scale_to_float,
-            "DRE 12M - Lucro/Ação": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 12M - Lucro/Ação": DataCleaner.clean_currency_to_float,
             
             # DRE 3M
             "DRE 3M - Receita Líquida": DataCleaner.clean_currency_with_scale_to_float,
@@ -1101,7 +1221,7 @@ class StocksScraper:
             "DRE 3M - Depreciação e Amortização": DataCleaner.clean_currency_with_scale_to_float,
             "DRE 3M - EBITDA": DataCleaner.clean_currency_with_scale_to_float,
             "DRE 3M - Lucro Líquido": DataCleaner.clean_currency_with_scale_to_float,
-            "DRE 3M - Lucro/Ação": DataCleaner.clean_currency_with_scale_to_float,
+            "DRE 3M - Lucro/Ação": DataCleaner.clean_currency_to_float,
             
             # Retornos e Margens - Percentuais
             "Retorno/Margem - Retorno s/ Capital Tangível Inicial": DataCleaner.clean_percentage_to_float,
@@ -1190,10 +1310,6 @@ class StocksScraper:
                     if cleaned_value is not None:
                         cleaned_data[field_name] = cleaned_value
                         
-                        # Log de debug (opcional)
-                        if original_value != str(cleaned_value):
-                            pass  # print(f"🧹 {field_name}: '{original_value}' -> {cleaned_value}")
-                            
                 except Exception as e:
                     print(f"⚠️  Erro ao limpar campo '{field_name}': {e}")
                     # Mantém valor original em caso de erro
@@ -1292,7 +1408,7 @@ class StocksScraper:
         print(f"\n🎉 Scraping concluído! {len(self.stocks_data)} ações processadas")
     
     def save_results(self):
-        """Salva os resultados apenas em Excel"""
+        """Salva os resultados apenas em Excel com formatação adequada"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         df = pd.DataFrame(self.stocks_data)
@@ -1301,8 +1417,36 @@ class StocksScraper:
         excel_file = f"stocks_data_{timestamp}.xlsx"
         
         try:
-            # Salva em Excel
-            df.to_excel(excel_file, index=False)
+            # Salva em Excel com writer para controle de formatação
+            with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Stocks')
+                
+                # Obtém a worksheet para aplicar formatação
+                worksheet = writer.sheets['Stocks']
+                
+                # Define formato numérico para campos monetários grandes
+                from openpyxl.styles import NamedStyle
+                
+                # Formato para números grandes (sem notação científica)
+                number_format = NamedStyle(name='big_numbers')
+                number_format.number_format = '0.00'
+                
+                # Campos que devem ter formato numérico específico
+                financial_fields = [
+                    'Indicador - Market Cap Empresa',
+                    'Indicador - Enterprise Value',
+                    'DRE 12M - Receita Líquida',
+                    'DRE 12M - EBITDA',
+                    'DRE 12M - Lucro Líquido'
+                ]
+                
+                # Aplica formatação às colunas relevantes
+                for col_idx, col_name in enumerate(df.columns, 1):
+                    if any(field in col_name for field in financial_fields):
+                        for row_idx in range(2, len(df) + 2):  # Skip header
+                            cell = worksheet.cell(row=row_idx, column=col_idx)
+                            if isinstance(cell.value, (int, float)):
+                                cell.number_format = '0.00'
             
             print(f"\n💾 Dados salvos em:")
             print(f"   📄 EXCEL: {excel_file}")
@@ -1311,7 +1455,13 @@ class StocksScraper:
             
         except Exception as e:
             print(f"❌ Erro ao salvar: {e}")
-            return None
+            # Fallback para salvamento simples
+            try:
+                df.to_excel(excel_file, index=False)
+                print(f"   📄 EXCEL (formato simples): {excel_file}")
+                return excel_file
+            except:
+                return None
     
     def show_summary(self):
         """Mostra resumo dos dados coletados"""
